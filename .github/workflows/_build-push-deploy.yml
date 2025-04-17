@@ -1,0 +1,63 @@
+# devops/.github/workflows/_build-push-deploy.yml
+name: Build / Test / Push / Deploy
+on:
+  workflow_call:
+    inputs:
+      service: {required: true, type: string}
+      branch:  {required: true, type: string}
+      dockerfile: {required: true, type: string}
+    secrets:
+      REGISTRY_USER: {}
+      REGISTRY_PASS: {}
+      SSH_HOST: {}
+      SSH_USER: {}
+      SSH_KEY:  {}
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: ${{ inputs.branch }}}
+
+      - name: Set up language
+        if: ${{ inputs.service == 'frontend' }}
+        uses: actions/setup-node@v4
+        with: {node-version: '20'}
+
+      - name: Dependencies & tests
+        run: |
+          if [ "${{ inputs.service }}" = "frontend" ]; then
+            npm ci
+            npm run test:ci
+          else
+            pip install -r requirements.txt
+            pytest
+          fi
+
+      - name: Build & push
+        run: |
+          echo ${{ secrets.REGISTRY_PASS }} | docker login registry.${{ github.repository_owner }} -u ${{ secrets.REGISTRY_USER }} --password-stdin
+          docker build -f ${{ inputs.dockerfile }} -t registry.${{ env.DOMAIN }}/${{ inputs.service }}:${{ github.sha }} .
+          docker push registry.${{ env.DOMAIN }}/${{ inputs.service }}:${{ github.sha }}
+
+          TAG=$( [ "${{ inputs.branch }}" = "dev" ] && echo dev || echo latest )
+          docker tag registry.${{ env.DOMAIN }}/${{ inputs.service }}:${{ github.sha }} registry.${{ env.DOMAIN }}/${{ inputs.service }}:$TAG
+          docker push registry.${{ env.DOMAIN }}/${{ inputs.service }}:$TAG
+
+  deploy:
+    needs: build-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            BRANCH=${{ inputs.branch }}
+            STACK=$([ "$BRANCH" = "dev" ] && echo stage || echo prod)
+            cd /opt/$STACK
+            docker compose pull
+            docker compose up -d --remove-orphans
+            docker system prune -f

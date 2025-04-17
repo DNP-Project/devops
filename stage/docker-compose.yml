@@ -1,0 +1,36 @@
+# /opt/stage/docker-compose.yml
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PG_USER}
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+      POSTGRES_DB: ${PG_DB}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks: [stage]
+
+  backend:
+    image: registry.${DOMAIN}/backend:${BACK_TAG}
+    depends_on: [postgres]
+    environment:
+      - DATABASE_URL=postgresql://${PG_USER}:${PG_PASSWORD}@postgres:5432/${PG_DB}
+    networks: [stage]
+
+  frontend:
+    image: registry.${DOMAIN}/frontend:${FRONT_TAG}
+    networks: [stage]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.front-dev.rule=Host(`stage.${DOMAIN}`)"
+      - "traefik.http.routers.front-dev.entrypoints=websecure"
+      - "traefik.http.routers.front-dev.tls.certresolver=letsencrypt"
+
+networks:
+  stage:
+
+volumes:
+  pg_data:
