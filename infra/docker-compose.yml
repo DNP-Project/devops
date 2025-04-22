@@ -3,7 +3,8 @@ version: "3.9"
 
 x-common: &common
   restart: unless-stopped
-  networks: [infra]
+  # убрали старую сеть infra, подключение будет задаваться внизу
+  networks: []
 
 services:
   traefik:
@@ -12,17 +13,25 @@ services:
     command:
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=infra_prod
+      - --providers.docker.network=infra_stage
       - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entryPoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
       - --entrypoints.websecure.address=:443
-      - --certificatesresolvers.letsencrypt.acme.tlschallenge=true
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge=true
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
       - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}
       - --certificatesresolvers.letsencrypt.acme.storage=/acme.json
     ports:
       - "80:80"
       - "443:443"
     volumes:
+      - ./acme.json:/acme.json
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - traefik_acme:/acme.json
+    networks:
+      - prod_net
+      - stage_net
 
   registry:
     <<: *common
@@ -38,6 +47,9 @@ services:
       - "traefik.http.routers.registry.tls.certresolver=letsencrypt"
       - "traefik.http.routers.registry.middlewares=registry-auth"
       - "traefik.http.middlewares.registry-auth.basicauth.users=${REGISTRY_AUTH}"
+    networks:
+      - prod_net
+      - stage_net
 
   loki:
     <<: *common
@@ -46,6 +58,9 @@ services:
     volumes:
       - ./loki-config.yaml:/etc/loki/local-config.yaml:ro
       - loki_data:/loki
+    networks:
+      - prod_net
+      - stage_net
 
   promtail:
     <<: *common
@@ -54,6 +69,9 @@ services:
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./promtail-config.yaml:/etc/promtail/promtail.yaml:ro
+    networks:
+      - prod_net
+      - stage_net
 
   prometheus:
     <<: *common
@@ -61,14 +79,23 @@ services:
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prom_data:/prometheus
+    networks:
+      - prod_net
+      - stage_net
 
   cadvisor:
     <<: *common
     image: gcr.io/cadvisor/cadvisor:v0.50.0
+    networks:
+      - prod_net
+      - stage_net
 
   node_exporter:
     <<: *common
     image: quay.io/prometheus/node-exporter:v1.9.0
+    networks:
+      - prod_net
+      - stage_net
 
   grafana:
     <<: *common
@@ -78,15 +105,24 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PWD}
     volumes:
       - grafana_data:/var/lib/grafana
-    depends_on: [loki]
+    depends_on:
+      - loki
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.grafana.rule=Host(`grafana.${DOMAIN}`)"
       - "traefik.http.routers.grafana.entrypoints=websecure"
       - "traefik.http.routers.grafana.tls.certresolver=letsencrypt"
+    networks:
+      - prod_net
+      - stage_net
 
 networks:
-  infra:
+  prod_net:
+    external: true
+    name: infra_prod
+  stage_net:
+    external: true
+    name: infra_stage
 
 volumes:
   traefik_acme:

@@ -1,36 +1,44 @@
-# /opt/prod/docker-compose.yml
-version: "3.9"
-
+version: '3.8'
 services:
-  postgres:
-    image: postgres:17
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${PG_USER}
-      POSTGRES_PASSWORD: ${PG_PASSWORD}
-      POSTGRES_DB: ${PG_DB}
-    volumes:
-      - pg_data:/var/lib/postgresql/data
-    networks: [prod]
-
-  backend:
-    image: registry.${DOMAIN}/backend:${BACK_TAG}
-    depends_on: [postgres]
-    environment:
-      - DATABASE_URL=postgresql://${PG_USER}:${PG_PASSWORD}@postgres:5432/${PG_DB}
-    networks: [prod]
-
   frontend:
-    image: registry.${DOMAIN}/frontend:${FRONT_TAG}
-    networks: [prod]
+    image: registry.dnp-project.ru/frontend:latest
+    restart: unless-stopped
+    networks:
+      - infra
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.front.rule=Host(`${DOMAIN}`)"
-      - "traefik.http.routers.front.entrypoints=websecure"
-      - "traefik.http.routers.front.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.frontend-prod.rule=Host(`dnp-project.ru`) && PathPrefix(`/`) && !PathPrefix(`/rpc`) && !PathPrefix(`/docs`) && !PathPrefix(`/redoc`)"
+      - "traefik.http.routers.frontend-prod.entrypoints=websecure"
+      - "traefik.http.routers.frontend-prod.tls=true"
+      - "traefik.http.routers.frontend-prod.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.frontend-prod.priority=5"
+
+  backend:
+    image: registry.dnp-project.ru/backend:latest
+    restart: unless-stopped
+    networks:
+      - infra
+    labels:
+      - "traefik.enable=true"
+
+      - "traefik.http.services.backend-prod.loadbalancer.server.port=8000"
+
+      - "traefik.http.routers.backend-prod-rpc.rule=Host(`dnp-project.ru`) && (PathPrefix(`/rpc`) || PathPrefix(`/openapi.json`))"
+      - "traefik.http.routers.backend-prod-rpc.entrypoints=websecure"
+      - "traefik.http.routers.backend-prod-rpc.tls=true"
+      - "traefik.http.routers.backend-prod-rpc.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.backend-prod-rpc.priority=20"
+      - "traefik.http.routers.backend-prod-rpc.service=backend-prod"
+
+      - "traefik.http.services.backend-prod-docs.loadbalancer.server.port=8000"
+      - "traefik.http.routers.backend-prod-docs.rule=Host(`dnp-project.ru`) && (PathPrefix(`/docs`) || PathPrefix(`/redoc`))"
+      - "traefik.http.routers.backend-prod-docs.entrypoints=websecure"
+      - "traefik.http.routers.backend-prod-docs.tls=true"
+      - "traefik.http.routers.backend-prod-docs.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.backend-prod-docs.priority=30"
+      - "traefik.http.routers.backend-prod-docs.service=backend-prod-docs"
 
 networks:
-  prod:
-
-volumes:
-  pg_data:
+  infra:
+    external: true
+    name: infra_prod
